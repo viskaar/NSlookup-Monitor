@@ -1,0 +1,530 @@
+#!/usr/bin/env python3
+"""
+DNS Security Scanner - Fixed Version for DevAsc
+"""
+
+import subprocess
+import re
+import socket
+import requests
+import time
+from datetime import datetime
+
+class DNSecurityScanner:
+    def __init__(self):
+        self.results = {
+            'dns_records': {},
+            'security_analysis': {},
+            'threat_intel': {},
+            'query_time': 0,
+            'timestamp': ''
+        }
+
+    def get_valid_input(self):
+        print("🔍 DNS Security Scanner - Advanced DNS Analysis")
+        print("=" * 60)
+        
+        domain = input("Enter domain to scan (default: google.com): ").strip()
+        if not domain:
+            domain = "google.com"
+        
+        print("\n🔧 Scan Options:")
+        print("1. Basic DNS Lookup")
+        print("2. Security Analysis") 
+        print("3. Full Security Scan")
+        
+        choice = input("Choose scan type (1-3, default: 3): ").strip()
+        if not choice:
+            choice = "3"
+        
+        return domain, choice
+
+    def execute_comprehensive_scan(self, domain):
+        """Execute comprehensive DNS security scan"""
+        print(f"\n🎯 Starting Security Scan for: {domain}")
+        print("=" * 70)
+        
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        print(f"🕐 Scan started: {timestamp}")
+        print("-" * 70)
+        
+        scan_results = {
+            'basic_records': {},
+            'security_checks': {},
+            'threat_intelligence': {},
+            'recommendations': []
+        }
+        
+        # Scan semua record types
+        record_types = ['A', 'AAAA', 'MX', 'NS', 'CNAME', 'TXT']
+        
+        for record_type in record_types:
+            print(f"📡 Scanning {record_type} records...")
+            records = self.query_dns_records_improved(domain, record_type)
+            scan_results['basic_records'][record_type] = records
+            
+            if records:  # Only analyze if records found
+                security_findings = self.analyze_record_security(records, record_type, domain)
+                scan_results['security_checks'][record_type] = security_findings
+            else:
+                scan_results['security_checks'][record_type] = {
+                    'risk_level': 'HIGH',
+                    'issues': [f'No {record_type} records found'],
+                    'warnings': [],
+                    'recommendations': [f'Configure {record_type} records properly']
+                }
+            
+            time.sleep(0.5)  # Rate limiting
+        
+        # Threat intelligence gathering
+        print("🌐 Gathering threat intelligence...")
+        scan_results['threat_intelligence'] = self.get_threat_intelligence(domain)
+        
+        # Security scoring
+        scan_results['security_score'] = self.calculate_security_score(scan_results)
+        
+        return scan_results
+
+    def query_dns_records_improved(self, domain, record_type):
+        """Improved DNS query dengan parsing yang lebih baik"""
+        try:
+            # Gunakan command yang berbeda berdasarkan record type
+            if record_type in ['A', 'AAAA']:
+                cmd = ['nslookup', domain]
+            else:
+                cmd = ['nslookup', '-query=' + record_type, domain]
+            
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+            
+            if result.returncode == 0:
+                return self.parse_nslookup_improved(result.stdout, record_type, domain)
+            else:
+                print(f"⚠️  Query failed for {record_type}: {result.stderr}")
+                return []
+                
+        except subprocess.TimeoutExpired:
+            print(f"⏰ Timeout querying {record_type} records")
+            return []
+        except Exception as e:
+            print(f"💥 Error querying {record_type}: {e}")
+            return []
+
+    def parse_nslookup_improved(self, output, record_type, domain):
+        """Improved parsing untuk berbagai format nslookup"""
+        records = []
+        lines = output.strip().split('\n')
+        
+        # Debug: Tampilkan raw output
+        if len(output.strip()) == 0:
+            print(f"   Empty response for {record_type}")
+            return records
+            
+        # Parse berdasarkan record type
+        if record_type in ['A', 'AAAA']:
+            records = self.parse_address_records_improved(lines, record_type)
+        elif record_type == 'MX':
+            records = self.parse_mx_records_improved(lines)
+        elif record_type == 'NS':
+            records = self.parse_ns_records_improved(lines)
+        elif record_type == 'CNAME':
+            records = self.parse_cname_records_improved(lines)
+        elif record_type == 'TXT':
+            records = self.parse_txt_records_improved(lines)
+        
+        print(f"   Found {len(records)} {record_type} records")
+        return records
+
+    def parse_address_records_improved(self, lines, record_type):
+        """Parse A dan AAAA records dengan pattern matching yang lebih baik"""
+        records = []
+        in_answer_section = False
+        
+        for line in lines:
+            line = line.strip()
+            
+            # Skip header lines
+            if line.startswith('Server:') or line.startswith('Address:'):
+                continue
+            
+            # Look for answer section
+            if 'Name:' in line or 'Address:' in line:
+                in_answer_section = True
+            
+            if in_answer_section and 'Address:' in line:
+                parts = line.split('Address:')
+                if len(parts) > 1:
+                    ip = parts[1].strip()
+                    # Validate IP based on record type
+                    if record_type == 'A' and self.is_ipv4(ip):
+                        records.append({'type': 'A', 'value': ip})
+                    elif record_type == 'AAAA' and self.is_ipv6(ip):
+                        records.append({'type': 'AAAA', 'value': ip})
+        
+        return records
+
+    def parse_mx_records_improved(self, lines):
+        """Parse MX records dengan pattern yang lebih flexible"""
+        records = []
+        
+        for line in lines:
+            line = line.strip()
+            # Look for MX records pattern
+            if 'mail exchanger' in line.lower():
+                # Pattern: "priority = value" atau "value priority"
+                if '=' in line:
+                    parts = line.split('=')
+                    if len(parts) >= 2:
+                        mx_data = parts[1].strip().split()
+                        if len(mx_data) >= 2:
+                            records.append({
+                                'type': 'MX',
+                                'priority': mx_data[0],
+                                'value': mx_data[1]
+                            })
+                else:
+                    # Alternative pattern
+                    words = line.split()
+                    for i, word in enumerate(words):
+                        if word.isdigit() and i+1 < len(words):
+                            records.append({
+                                'type': 'MX', 
+                                'priority': word,
+                                'value': words[i+1]
+                            })
+                            break
+        
+        return records
+
+    def parse_ns_records_improved(self, lines):
+        """Parse NS records"""
+        records = []
+        
+        for line in lines:
+            line = line.strip()
+            if 'nameserver' in line.lower():
+                # Extract nameserver
+                parts = line.split('=')
+                if len(parts) >= 2:
+                    ns = parts[1].strip()
+                    records.append({'type': 'NS', 'value': ns})
+                else:
+                    # Alternative extraction
+                    words = line.split()
+                    for word in words:
+                        if '.' in word and 'nameserver' not in word.lower():
+                            records.append({'type': 'NS', 'value': word})
+                            break
+        
+        return records
+
+    def parse_cname_records_improved(self, lines):
+        """Parse CNAME records"""
+        records = []
+        
+        for line in lines:
+            line = line.strip()
+            if 'canonical name' in line.lower():
+                parts = line.split('=')
+                if len(parts) >= 2:
+                    cname = parts[1].strip()
+                    records.append({'type': 'CNAME', 'value': cname})
+        
+        return records
+
+    def parse_txt_records_improved(self, lines):
+        """Parse TXT records"""
+        records = []
+        in_txt_section = False
+        current_txt = ""
+        
+        for line in lines:
+            line = line.strip()
+            
+            if 'text =' in line.lower():
+                in_txt_section = True
+                parts = line.split('=')
+                if len(parts) >= 2:
+                    current_txt = parts[1].strip()
+                    records.append({'type': 'TXT', 'value': current_txt})
+            elif in_txt_section and line.startswith('"'):
+                # Multi-line TXT record
+                current_txt += line.strip('"')
+            else:
+                in_txt_section = False
+        
+        return records
+
+    def analyze_record_security(self, records, record_type, domain):
+        """Analisis keamanan untuk records"""
+        findings = {
+            'risk_level': 'LOW',
+            'issues': [],
+            'warnings': [],
+            'recommendations': []
+        }
+        
+        if not records:
+            findings['risk_level'] = 'HIGH'
+            findings['issues'].append(f"No {record_type} records found")
+            return findings
+        
+        if record_type == "A":
+            findings.update(self.analyze_a_records(records, domain))
+        elif record_type == "MX":
+            findings.update(self.analyze_mx_records(records, domain))
+        elif record_type == "NS":
+            findings.update(self.analyze_ns_records(records, domain))
+        elif record_type == "TXT":
+            findings.update(self.analyze_txt_records(records, domain))
+        
+        return findings
+
+    def analyze_a_records(self, records, domain):
+        findings = {'issues': [], 'warnings': [], 'recommendations': []}
+        
+        # Check for private IPs
+        for record in records:
+            ip = record['value']
+            if self.is_private_ip(ip):
+                findings['issues'].append(f"Private IP in A record: {ip}")
+        
+        # Check for multiple IPs (load balancing)
+        if len(records) > 1:
+            findings['warnings'].append("Multiple A records - potential load balancing")
+        
+        return findings
+
+    def analyze_mx_records(self, records, domain):
+        findings = {'issues': [], 'warnings': [], 'recommendations': []}
+        
+        # Check MX priorities
+        try:
+            priorities = [int(r['priority']) for r in records]
+            if len(priorities) != len(set(priorities)):
+                findings['warnings'].append("Duplicate MX priorities detected")
+            
+            # Check for backup MX
+            if len(records) == 1:
+                findings['warnings'].append("No backup MX server configured")
+                
+        except (ValueError, KeyError):
+            findings['warnings'].append("Could not parse MX priorities")
+        
+        return findings
+
+    def analyze_ns_records(self, records, domain):
+        findings = {'issues': [], 'warnings': [], 'recommendations': []}
+        
+        # Check minimum nameservers
+        if len(records) < 2:
+            findings['issues'].append("Less than 2 nameservers - single point of failure")
+        
+        return findings
+
+    def analyze_txt_records(self, records, domain):
+        findings = {'issues': [], 'warnings': [], 'recommendations': []}
+        
+        spf_found = any('v=spf1' in r['value'].lower() for r in records)
+        dmarc_found = any('v=dmarc1' in r['value'].lower() for r in records)
+        
+        if not spf_found:
+            findings['issues'].append("No SPF record found - email spoofing risk")
+        if not dmarc_found:
+            findings['warnings'].append("No DMARC record found - email security risk")
+        
+        return findings
+
+    def get_threat_intelligence(self, domain):
+        """Basic threat intelligence checks"""
+        threat_info = {
+            'suspicious_indicators': [],
+            'reputation': 'UNKNOWN'
+        }
+        
+        # Basic domain heuristic checks
+        if self.is_suspicious_domain(domain):
+            threat_info['suspicious_indicators'].append("Suspicious domain pattern detected")
+            threat_info['reputation'] = 'SUSPICIOUS'
+        
+        return threat_info
+
+    def is_suspicious_domain(self, domain):
+        """Check for suspicious domain patterns"""
+        suspicious_tlds = ['.tk', '.ml', '.ga', '.cf', '.xyz', '.top']
+        suspicious_patterns = [
+            r'.*-\d+\.',
+            r'.*g00gle.*',
+            r'.*faceb00k.*',
+            r'.*paypa1.*',
+            r'.*apple-?login.*'
+        ]
+        
+        if any(domain.endswith(tld) for tld in suspicious_tlds):
+            return True
+        
+        for pattern in suspicious_patterns:
+            if re.match(pattern, domain, re.IGNORECASE):
+                return True
+        
+        return False
+
+    def is_private_ip(self, ip):
+        """Check if IP is in private range"""
+        if not self.is_ipv4(ip):
+            return False
+            
+        ip_parts = list(map(int, ip.split('.')))
+        
+        # Private IP ranges
+        if ip_parts[0] == 10:
+            return True
+        elif ip_parts[0] == 172 and 16 <= ip_parts[1] <= 31:
+            return True
+        elif ip_parts[0] == 192 and ip_parts[1] == 168:
+            return True
+            
+        return False
+
+    def calculate_security_score(self, scan_results):
+        """Calculate security score"""
+        base_score = 100
+        
+        for record_type, findings in scan_results['security_checks'].items():
+            for issue in findings.get('issues', []):
+                base_score -= 10
+            for warning in findings.get('warnings', []):
+                base_score -= 5
+        
+        # Add bonus for good configurations
+        txt_findings = scan_results['security_checks'].get('TXT', {})
+        if 'v=spf1' in str(txt_findings):
+            base_score += 5
+        if 'v=dmarc1' in str(txt_findings):
+            base_score += 5
+            
+        ns_findings = scan_results['security_checks'].get('NS', {})
+        if len(scan_results['basic_records'].get('NS', [])) >= 2:
+            base_score += 5
+            
+        return max(0, min(100, base_score))
+
+    def display_security_report(self, scan_results, domain):
+        """Display security report"""
+        print(f"\n{'='*80}")
+        print(f"🔒 DNS SECURITY SCAN REPORT - {domain.upper()}")
+        print(f"{'='*80}")
+        
+        score = scan_results['security_score']
+        if score >= 80:
+            rating = "💚 EXCELLENT"
+        elif score >= 60:
+            rating = "💛 GOOD" 
+        elif score >= 40:
+            rating = "🟡 FAIR"
+        else:
+            rating = "🔴 POOR"
+        
+        print(f"\n🏆 SECURITY SCORE: {score}/100 {rating}")
+        
+        # Records summary
+        print(f"\n📊 DNS RECORDS FOUND:")
+        print("-" * 50)
+        for record_type, records in scan_results['basic_records'].items():
+            count = len(records)
+            status = "✅" if count > 0 else "❌"
+            print(f"  {status} {record_type}: {count} records")
+        
+        # Security findings
+        print(f"\n🔍 SECURITY ANALYSIS:")
+        print("-" * 50)
+        
+        has_issues = False
+        for record_type, findings in scan_results['security_checks'].items():
+            if findings.get('issues'):
+                has_issues = True
+                print(f"\n❌ {record_type} ISSUES:")
+                for issue in findings['issues']:
+                    print(f"   • {issue}")
+            
+            if findings.get('warnings'):
+                has_issues = True  
+                print(f"\n⚠️  {record_type} WARNINGS:")
+                for warning in findings['warnings']:
+                    print(f"   • {warning}")
+        
+        if not has_issues:
+            print("✅ No security issues detected")
+        
+        # Recommendations
+        print(f"\n💡 RECOMMENDATIONS:")
+        print("-" * 40)
+        recommendations = [
+            "Configure SPF records for email security",
+            "Implement DMARC policy",
+            "Use at least 2 nameservers",
+            "Monitor DNS records regularly",
+            "Consider implementing DNSSEC"
+        ]
+        
+        for rec in recommendations:
+            print(f"   • {rec}")
+        
+        print(f"\n{'='*80}")
+        print("Scan completed at:", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+        print(f"{'='*80}")
+
+    # Utility methods
+    def is_ipv4(self, ip):
+        try:
+            socket.inet_pton(socket.AF_INET, ip)
+            return True
+        except socket.error:
+            return False
+
+    def is_ipv6(self, ip):
+        try:
+            socket.inet_pton(socket.AF_INET6, ip)
+            return True
+        except socket.error:
+            return False
+
+    def run(self):
+        """Main execution"""
+        try:
+            domain, scan_type = self.get_valid_input()
+            
+            if scan_type == "1":
+                # Basic scan
+                records = self.query_dns_records_improved(domain, "A")
+                self.display_basic_results(records, domain)
+            else:
+                # Security scan
+                scan_results = self.execute_comprehensive_scan(domain)
+                self.display_security_report(scan_results, domain)
+                
+        except KeyboardInterrupt:
+            print("\n\n⏹️  Scan stopped by user")
+        except Exception as e:
+            print(f"\n❌ Error: {e}")
+
+    def display_basic_results(self, records, domain):
+        """Display basic results"""
+        print(f"\n📊 Basic DNS Results for {domain}")
+        print("=" * 50)
+        if records:
+            for record in records:
+                print(f"  • {record['value']}")
+        else:
+            print("  ❌ No records found")
+
+def main():
+    scanner = DNSecurityScanner()
+    scanner.run()
+
+if __name__ == "__main__":
+    main()
